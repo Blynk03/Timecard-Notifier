@@ -1,0 +1,69 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject DispatchState State
+
+<div class="min-h-screen lg:flex">
+    @* Sidebar (desktop) / top bar (mobile) *@
+    <aside class="bg-brand-900 text-brand-100 lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:flex-col">
+        <div class="flex items-center justify-between px-5 py-4 lg:py-6">
+            <a href="" class="flex items-center gap-3">
+                <span class="grid h-9 w-9 place-items-center rounded-lg bg-brand-500 text-white">
+                    <Icon Name="clock" Class="h-5 w-5" />
+                </span>
+                <span>
+                    <span class="block text-sm font-semibold leading-tight text-white">Timecard Reminders</span>
+                    <span class="block text-xs text-brand-300">Teams notifications</span>
+                </span>
+            </a>
+            <button class="rounded-md p-2 hover:bg-brand-800 lg:hidden" @onclick="() => _menuOpen = !_menuOpen" aria-label="Toggle menu">
+                <Icon Name="menu" />
+            </button>
+        </div>
+
+        <nav class="@(_menuOpen ? "block" : "hidden") space-y-1 px-3 pb-4 lg:block lg:flex-1">
+            @foreach (var (href, label, icon) in Links)
+            {
+                <NavLink href="@href" Match="@(href == "" ? NavLinkMatch.All : NavLinkMatch.Prefix)"
+                         class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-brand-200 hover:bg-brand-800 hover:text-white"
+                         ActiveClass="!bg-brand-700 !text-white font-medium"
+                         @onclick="() => _menuOpen = false">
+                    <Icon Name="@icon" Class="h-[18px] w-[18px]" />
+                    @label
+                </NavLink>
+            }
+        </nav>
+
+        <div class="hidden border-t border-brand-800 px-5 py-4 text-xs text-brand-300 lg:block">
+            <div class="flex items-center gap-2">
+                <span class="h-2 w-2 rounded-full @(State.IsRunning ? "animate-pulse bg-emerald-400" : "bg-brand-400")"></span>
+                @(State.IsRunning ? "Dispatch running" : "Idle")
+            </div>
+            <div class="mt-1">Run date @State.RunDate.ToString("ddd, MMM d")</div>
+        </div>
+    </aside>
+
+    <main class="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
+        <div class="mx-auto max-w-6xl">
+            @Body
+        </div>
+    </main>
+</div>
+
+@code {
+    private bool _menuOpen;
+
+    private static readonly (string Href, string Label, string Icon)[] Links =
+    {
+        ("", "Today's run", "dashboard"),
+        ("capacity", "Capacity planner", "gauge"),
+        ("queue", "Recipients", "queue"),
+        ("holidays", "Holidays", "calendar"),
+        ("exemptions", "Exemptions", "ban"),
+        ("card", "Card preview", "card"),
+        ("settings", "Settings", "settings"),
+    };
+
+    protected override void OnInitialized() => State.Changed += OnChanged;
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+    public void Dispose() => State.Changed -= OnChanged;
+}

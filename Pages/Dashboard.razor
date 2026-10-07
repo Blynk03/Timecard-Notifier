@@ -1,0 +1,390 @@
+@page "/"
+@implements IDisposable
+@inject DispatchState State
+@inject NotifierSettings Settings
+
+<PageTitle>Today's run · Timecard Reminders</PageTitle>
+
+<header class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+    <div>
+        <h1 class="text-2xl font-semibold text-slate-900" tabindex="-1">Today's run</h1>
+        <p class="mt-1 max-w-2xl text-sm text-slate-600">
+            @if (State.IsFridayCatchUp)
+            {
+                <span>Monday: one reminder for anyone missing hours on last <span class="font-medium text-slate-800">@State.CheckedRangeLabel</span>
+                (holidays ignored). This week's timecard starts today, so nothing else is checked.</span>
+            }
+            else if (State.CheckedRangeLabel is { } range)
+            {
+                <span>One reminder for anyone missing hours on any workday from <span class="font-medium text-slate-800">@range</span>
+                (week of @State.WeekStart.ToString("MMM d"), weekends and holidays ignored).</span>
+            }
+            else
+            {
+                <span>@State.RunDate.DayOfWeek: there are no workdays earlier this week to check yet.</span>
+            }
+            Everyone is reminded before <span class="font-mono text-slate-800">@Settings.Deadline.ToString("HH:mm")</span> local.
+            Waves start as late as they can and as early as they need to.
+        </p>
+    </div>
+    <div class="flex flex-wrap items-end gap-2">
+        <label class="block">
+            <span class="label">Run date</span>
+            <input type="date" class="field w-40" value="@State.RunDate.ToString("yyyy-MM-dd")" @onchange="OnDateChanged" disabled="@State.IsRunning" />
+        </label>
+        <button class="btn-secondary" @onclick="() => State.LoadAsync(State.RunDate)" disabled="@(State.IsLoading || State.IsRunning)" title="Re-run the missing-entries query">
+            <Icon Name="refresh" Class="h-4 w-4" /> Refresh list
+        </button>
+        @if (State.IsRunning)
+        {
+            <button class="btn bg-rose-600 text-white hover:bg-rose-700" @onclick="State.Cancel">
+                <Icon Name="stop" Class="h-4 w-4" /> Stop
+            </button>
+        }
+        else if (Plan is { } p && p.Sent + p.Failed > 0)
+        {
+            <button class="btn-secondary" @onclick="State.Replan">Reset simulation</button>
+        }
+        else
+        {
+            <button class="btn-primary" @onclick="State.SimulateAsync" disabled="@(Plan is null || Plan.ToSend == 0)"
+                    title="Fast-forward through the plan, one minute at a time">
+                <Icon Name="play" Class="h-4 w-4" /> Simulate dispatch
+            </button>
+        }
+    </div>
+</header>
+
+@if (State.IsLoading || Plan is null)
+{
+    <div class="card mt-6 grid h-64 place-items-center text-sm text-slate-500">Loading recipients…</div>
+}
+else
+{
+    @* ── Banners ─────────────────────────────────────────────── *@
+    @if (Plan.Waves.Any(w => w.IsWeekend))
+    {
+        <div class="mt-6 flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+            <Icon Name="calendar" Class="mt-0.5 h-5 w-5 shrink-0" />
+            <div><span class="font-semibold">@Plan.RunDate.DayOfWeek: no reminders today.</span> Nobody is notified on weekends. Pick a weekday to preview a run.</div>
+        </div>
+    }
+    else if (HolidayGroups.Any())
+    {
+        <div class="mt-6 flex items-start gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900">
+            <Icon Name="calendar" Class="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+                <span class="font-semibold">Holiday skips today:</span>
+                @foreach (var h in HolidayGroups)
+                {
+                    <span class="ml-1 inline-block">@TimeZoneCatalog.Flag(h.Key.CountryCode) @h.Key.Name (@h.Count().ToString("N0") people)</span>
+                }
+            </div>
+        </div>
+    }
+
+    @if (Plan.LateRisk > 0)
+    {
+        var lateWaves = Plan.Waves.Where(w => w.LateRisk > 0).ToList();
+        <div class="mt-4 flex items-start gap-3 rounded-xl border border-rose-300 bg-rose-50 p-4 text-sm text-rose-900">
+            <Icon Name="alert" Class="mt-0.5 h-5 w-5 shrink-0" />
+            <p>
+                <span class="font-semibold">@Plan.LateRisk.ToString("N0") reminders can't go out before @Settings.Deadline.ToString("HH:mm") local</span>
+                (@(string.Join(", ", lateWaves.Select(w => $"{w.OffsetLabel} wave: {w.LateRisk:N0}")))), even starting at midnight.
+                At @NotifierSettings.RateLimitPerMinute per minute that's more than one day's sending time.
+            </p>
+        </div>
+    }
+    else if (Plan.Waves.Any(w => w.LastSendUtc is { } l && l >= w.TargetUtc))
+    {
+        <div class="mt-4 flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <Icon Name="alert" Class="mt-0.5 h-5 w-5 shrink-0" />
+            <p>Everyone makes @Settings.Deadline.ToString("HH:mm"), but some waves finish inside the @Settings.SafetyMarginMinutes-minute safety margin.</p>
+        </div>
+    }
+
+    @* ── Stats ───────────────────────────────────────────────── *@
+    <section class="mt-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <StatCard Label="In query" Value="@Plan.Total.ToString("N0")" Hint="Missing a day since last Friday" />
+        <StatCard Label="To notify" Value="@Plan.ToSend.ToString("N0")" Hint="@($"In {Plan.Waves.Count(w => w.ToSend > 0)} send waves")" />
+        <StatCard Label="Exempt" Value="@Plan.Exempt.ToString("N0")" Hint="Exempt cost centers" ValueClass="text-stone-600" />
+        <StatCard Label="Not needed" Value="@((Plan.Skipped + Plan.UpToDate).ToString("N0"))" Hint="No missing workdays, holiday or weekend" ValueClass="text-violet-700" />
+        <StatCard Label="Sent" Value="@Plan.Sent.ToString("N0")" Hint="@(Plan.Failed > 0 ? $"{Plan.Failed:N0} failed" : "No failures")" ValueClass="text-emerald-700" />
+        <StatCard Label="Late risk" Value="@Plan.LateRisk.ToString("N0")" Hint="@($"After {Settings.Deadline:HH:mm} local")" ValueClass="@(Plan.LateRisk > 0 ? "text-amber-600" : "text-slate-900")" />
+    </section>
+
+    @* ── Throttle / progress ─────────────────────────────────── *@
+    <section class="card mt-4 p-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="min-w-0">
+                <h2 class="text-sm font-semibold text-slate-900">Send rate</h2>
+                <p class="text-sm text-slate-600">
+                    Reminders go out at a fixed <span class="font-medium">@NotifierSettings.RateLimitPerMinute per minute</span> (Microsoft's limit, shared by every wave).
+                    @if (Plan.ToSend > 0)
+                    {
+                        <span>@Plan.ToSend.ToString("N0") reminders need <span class="font-medium">@FormatDuration(MinutesNeeded)</span> of sending, so the busiest waves start early.</span>
+                    }
+                    else
+                    {
+                        <span>Nothing to send today.</span>
+                    }
+                </p>
+                <div class="mt-2 flex flex-wrap gap-2">
+                    <span class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium @(Plan.PeakPerMinute <= NotifierSettings.RateLimitPerMinute ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700")">
+                        <Icon Name="check" Class="h-3.5 w-3.5" /> Busiest minute: @Plan.PeakPerMinute of @NotifierSettings.RateLimitPerMinute
+                    </span>
+                    @if (FirstSend is { } fs)
+                    {
+                        <span class="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
+                            Earliest local start: @fs
+                        </span>
+                    }
+                </div>
+            </div>
+            @if (State.SimulatedNowUtc is { } now)
+            {
+                <div class="rounded-lg bg-brand-50 px-3 py-2 text-right">
+                    <div class="text-[11px] font-semibold uppercase tracking-wide text-brand-700">Simulated clock</div>
+                    <div class="font-mono text-sm text-brand-900">@Fmt(now, LocalZoneId, "HH:mm") @LocalZoneShort</div>
+                </div>
+            }
+        </div>
+        <div class="mt-4 h-2.5 overflow-hidden rounded-full bg-slate-100">
+            <div class="h-full rounded-full bg-emerald-500 transition-all" style="width:@Pct(Plan.Sent + Plan.Failed, Plan.ToSend)%"></div>
+        </div>
+        <div class="mt-1.5 flex justify-between text-xs text-slate-500">
+            <span>@((Plan.Sent + Plan.Failed).ToString("N0")) of @Plan.ToSend.ToString("N0") processed</span>
+            <span>@(State.IsRunning ? "Sending…" : Plan.Sent + Plan.Failed == Plan.ToSend && Plan.ToSend > 0 ? "Done" : "Not started")</span>
+        </div>
+    </section>
+
+    @* ── Send waves ──────────────────────────────────────────── *@
+    <section class="card mt-4 overflow-hidden">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-3">
+            <div>
+                <h2 class="text-sm font-semibold text-slate-900">Send waves</h2>
+                <p class="text-xs text-slate-500">Countries whose clocks match today are combined into one wave. All waves share one 20-per-minute sender.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                <span class="flex items-center gap-1.5"><span class="h-2.5 w-5 rounded-sm bg-brand-100"></span>Safety margin</span>
+                <span class="flex items-center gap-1.5"><span class="h-2.5 w-5 rounded-sm bg-brand-600"></span>Sending</span>
+                <span class="flex items-center gap-1.5"><span class="h-2.5 w-5 rounded-sm bg-amber-500"></span>After deadline</span>
+                <span class="flex items-center gap-1.5"><span class="h-3 w-0.5 bg-rose-500"></span>@Settings.Deadline.ToString("HH:mm") local</span>
+                <span>Axis in @LocalZoneShort</span>
+            </div>
+        </div>
+
+        <div class="divide-y divide-slate-100">
+            <div class="hidden grid-cols-[260px_1fr_200px] gap-4 px-5 py-2 md:grid">
+                <div></div>
+                <div class="relative h-4 text-[11px] text-slate-400">
+                    @foreach (var tick in Ticks)
+                    {
+                        <span class="absolute -translate-x-1/2 font-mono" style="left:@Pos(tick)%">@Fmt(tick, LocalZoneId, "h tt")</span>
+                    }
+                </div>
+                <div></div>
+            </div>
+
+            @foreach (var w in Plan.Waves)
+            {
+                var local = (DateTimeOffset? t) => t is null ? "—" : Fmt(t.Value, w.ReferenceZoneId, "HH:mm");
+                <div class="grid grid-cols-1 gap-2 px-5 py-3 md:grid-cols-[260px_1fr_200px] md:items-center md:gap-4">
+                    <div class="min-w-0">
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-sm font-semibold text-slate-900">@w.OffsetLabel wave</span>
+                            <span class="text-xs tabular-nums text-slate-500">@w.ToSend.ToString("N0") to notify</span>
+                        </div>
+                        <div class="mt-1 flex flex-wrap gap-1">
+                            @foreach (var (zone, count) in w.Zones)
+                            {
+                                <span class="inline-flex items-center gap-1 rounded-md bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700" title="@zone.Region">
+                                    @TimeZoneCatalog.Flag(zone.CountryCode) @zone.City <span class="tabular-nums text-slate-500">@count.ToString("N0")</span>
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="relative h-7 rounded-md bg-slate-50">
+                        @foreach (var tick in Ticks)
+                        {
+                            <div class="absolute inset-y-0 hidden w-px bg-slate-200/70 md:block" style="left:@Pos(tick)%"></div>
+                        }
+                        <div class="absolute inset-y-1 rounded bg-brand-100" style="left:@Pos(w.TargetUtc)%;width:@Width(w.TargetUtc, w.DeadlineUtc)%" title="Safety margin"></div>
+                        @if (w.FirstSendUtc is { } first && w.LastSendUtc is { } last)
+                        {
+                            var onTimeEnd = last < w.DeadlineUtc ? last.AddSeconds(30) : w.DeadlineUtc;
+                            <div class="absolute inset-y-1 min-w-[3px] rounded-l bg-brand-600" style="left:@Pos(first)%;width:@Width(first, onTimeEnd)%"
+                                 title="@($"{local(first)}–{local(last)} local")"></div>
+                            @if (last >= w.DeadlineUtc)
+                            {
+                                <div class="absolute inset-y-1 rounded-r bg-amber-500" style="left:@Pos(w.DeadlineUtc)%;width:@Width(w.DeadlineUtc, last.AddSeconds(30))%"></div>
+                            }
+                        }
+                        <div class="absolute inset-y-0 w-0.5 bg-rose-500" style="left:@Pos(w.DeadlineUtc)%" title="Deadline @local(w.DeadlineUtc) local"></div>
+                    </div>
+
+                    <div class="flex items-center justify-between gap-2 md:block md:text-right">
+                        <div class="text-sm text-slate-800">
+                            @if (w.ToSend > 0)
+                            {
+                                <span class="font-mono">@local(w.FirstSendUtc)–@local(w.LastSendUtc?.AddMinutes(1))</span>
+                                <span class="text-xs text-slate-500">local · @FormatDuration(w.MinutesUsed)</span>
+                            }
+                            else
+                            {
+                                <span class="text-slate-400">No sends</span>
+                            }
+                        </div>
+                        <div class="text-xs text-slate-500">
+                            <WaveStatus Wave="w" />
+                            @if (w.LateRisk > 0)
+                            {
+                                <span class="text-amber-700"> · @w.LateRisk.ToString("N0") late</span>
+                            }
+                            else if (w.NotNotified > 0)
+                            {
+                                <span> · @w.NotNotified.ToString("N0") not notified</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </section>
+
+    @* ── Activity + failures ─────────────────────────────────── *@
+    <section class="mt-4 grid gap-4 lg:grid-cols-2">
+        <div class="card min-w-0">
+            <h2 class="border-b border-slate-200 px-5 py-3 text-sm font-semibold text-slate-900">Latest activity</h2>
+            @if (State.RecentActivity.Count == 0)
+            {
+                <p class="px-5 py-8 text-center text-sm text-slate-500">Nothing sent yet. Run <span class="font-medium">Simulate dispatch</span> to watch the queue drain.</p>
+            }
+            else
+            {
+                <ul class="divide-y divide-slate-100">
+                    @foreach (var item in State.RecentActivity)
+                    {
+                        <li class="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
+                            <div class="min-w-0">
+                                <div class="truncate font-medium text-slate-800">@item.Recipient.DisplayName</div>
+                                <div class="truncate text-xs text-slate-500">@TimeZoneCatalog.Get(item.Recipient.TimeZoneId).City · @Fmt(item.SentUtc!.Value, item.Recipient.TimeZoneId, "HH:mm:ss") local</div>
+                            </div>
+                            <StatusBadge Status="item.Status" LateRisk="item.IsLateRisk" />
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
+        <div class="card min-w-0">
+            <div class="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+                <h2 class="text-sm font-semibold text-slate-900">Needs attention</h2>
+                @if (AttentionCount > AttentionShown)
+                {
+                    <a href="queue" class="text-xs font-medium text-brand-600 hover:underline">Showing @AttentionShown of @AttentionCount.ToString("N0") · see Recipients</a>
+                }
+            </div>
+            @{ var attention = Plan.Items.Where(i => i.Status == DispatchStatus.Failed || i.IsLateRisk).Take(AttentionShown).ToList(); }
+            @if (attention.Count == 0)
+            {
+                <p class="flex items-center justify-center gap-2 px-5 py-8 text-sm text-slate-500">
+                    <Icon Name="check" Class="h-4 w-4 text-emerald-600" /> No failed or late reminders.
+                </p>
+            }
+            else
+            {
+                <ul class="max-h-80 divide-y divide-slate-100 overflow-auto">
+                    @foreach (var item in attention)
+                    {
+                        <li class="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
+                            <div class="min-w-0">
+                                <div class="truncate font-medium text-slate-800">@item.Recipient.DisplayName</div>
+                                <div class="truncate text-xs text-slate-500">@(item.Note ?? (item.IsLateRisk ? "Scheduled after the deadline" : "")) · @item.Recipient.Email</div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <StatusBadge Status="item.Status" LateRisk="item.IsLateRisk" />
+                                @if (item.Status == DispatchStatus.Failed)
+                                {
+                                    <button class="text-xs font-medium text-brand-600 hover:underline" @onclick="() => State.RetryAsync(item)">Retry</button>
+                                }
+                            </div>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private const int AttentionShown = 50;
+    private DispatchPlan? Plan => State.Plan;
+
+    // Axis is shown in the viewer's browser time zone.
+    private static readonly string LocalZoneId = TimeZoneInfo.Local.Id;
+    private string LocalZoneShort => TimeZoneCatalog.OffsetLabel(State.RunDate, LocalZoneId);
+
+    private DateTimeOffset AxisStart => Plan!.Waves.Min(w => w.FirstSendUtc is { } f && f < w.TargetUtc ? f : w.TargetUtc).AddMinutes(-30);
+    private DateTimeOffset AxisEnd => Plan!.Waves.Max(w => w.LastSendUtc is { } l && l > w.DeadlineUtc ? l : w.DeadlineUtc).AddMinutes(30);
+
+    /// <summary>"05:20 (New York)": the earliest local clock time anyone is reminded today.</summary>
+    private string? FirstSend
+    {
+        get
+        {
+            var w = Plan!.Waves.Where(x => x.FirstSendUtc is not null)
+                .MinBy(x => TimeOnly.FromDateTime(TimeZoneCatalog.ToLocal(x.FirstSendUtc!.Value, x.ReferenceZoneId).DateTime));
+            return w is null ? null : $"{Fmt(w.FirstSendUtc!.Value, w.ReferenceZoneId, "HH:mm")} ({w.Zones[0].Zone.City})";
+        }
+    }
+
+    private IEnumerable<DateTimeOffset> Ticks
+    {
+        get
+        {
+            if (Plan is null || Plan.Waves.Count == 0) yield break;
+            var span = (AxisEnd - AxisStart).TotalHours;
+            var step = span > 14 ? 3 : span > 8 ? 2 : 1;
+            var t = new DateTimeOffset(AxisStart.Year, AxisStart.Month, AxisStart.Day, AxisStart.Hour, 0, 0, TimeSpan.Zero).AddHours(1);
+            for (; t < AxisEnd; t = t.AddHours(step)) yield return t;
+        }
+    }
+
+    private IEnumerable<IGrouping<Holiday, DispatchItem>> HolidayGroups =>
+        Plan!.Items.Where(i => i.Holiday is not null).GroupBy(i => i.Holiday!);
+
+    private int AttentionCount => Plan!.LateRisk + Plan.Failed;
+
+    private int MinutesNeeded => (int)Math.Ceiling(Plan!.ToSend / (double)NotifierSettings.RateLimitPerMinute);
+
+    private static string FormatDuration(int minutes) =>
+        minutes < 60 ? $"{minutes} min" : $"{minutes / 60} h {minutes % 60:00} min";
+
+    private string Pos(DateTimeOffset t) =>
+        Math.Clamp((t - AxisStart).TotalMinutes / (AxisEnd - AxisStart).TotalMinutes * 100, 0, 100).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string Width(DateTimeOffset a, DateTimeOffset b) =>
+        Math.Max(0, (b - a).TotalMinutes / (AxisEnd - AxisStart).TotalMinutes * 100).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string Pct(int part, int whole) =>
+        (whole == 0 ? 0 : part * 100.0 / whole).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string Fmt(DateTimeOffset utc, string zoneId, string format) =>
+        TimeZoneCatalog.ToLocal(utc, zoneId).ToString(format);
+
+    private async Task OnDateChanged(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParse(e.Value?.ToString(), out var d)) await State.LoadAsync(d);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnChanged;
+        await State.EnsureLoadedAsync();
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+    public void Dispose() => State.Changed -= OnChanged;
+}

@@ -1,0 +1,23 @@
+@* Visual approximation of how the reminder renders in Microsoft Teams. *@
+<div class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm @(Compact ? "" : "max-w-md")">
+    <div class="h-1 bg-teams"></div>
+    <div class="space-y-2 p-4">
+        <div class="text-[15px] font-semibold text-slate-900">@Settings.CardTitle</div>
+        <p class="text-sm leading-relaxed text-slate-700">@Settings.CardMessage</p>
+        <div class="text-xs text-slate-500">Week of @AdaptiveCardBuilder.StartOfWeek(Workday).ToString("MMMM d")</div>
+    </div>
+    <div class="border-t border-slate-100 p-3">
+        <a href="@Settings.BuildTimecardUrl(Workday, EmployeeId)" target="_blank" rel="noopener"
+           class="flex w-full items-center justify-center gap-2 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-semibold text-teams hover:bg-teams-light">
+            @Settings.ButtonText
+            <Icon Name="external" Class="h-3.5 w-3.5" />
+        </a>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public NotifierSettings Settings { get; set; } = default!;
+    [Parameter] public DateOnly Workday { get; set; }
+    [Parameter] public string EmployeeId { get; set; } = "E10400";
+    [Parameter] public bool Compact { get; set; }
+}

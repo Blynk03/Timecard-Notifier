@@ -1,0 +1,199 @@
+@page "/capacity"
+@inject DispatchState State
+@inject NotifierSettings Settings
+
+<PageTitle>Capacity planner · Timecard Reminders</PageTitle>
+
+<header>
+    <h1 class="text-2xl font-semibold text-slate-900" tabindex="-1">Capacity planner</h1>
+    <p class="mt-1 max-w-3xl text-sm text-slate-600">
+        Enter how many reminders you expect per time zone and see when each wave has to start to reach everyone before
+        @_deadline.ToString("HH:mm") local at @NotifierSettings.RateLimitPerMinute per minute. Nothing here changes the real run.
+    </p>
+</header>
+
+<div class="mt-6 grid gap-4 lg:grid-cols-[340px_1fr]">
+    @* ── Inputs ─────────────────────────────────────────────── *@
+    <section class="card h-fit p-5">
+        <div class="flex items-center justify-between">
+            <h2 class="text-sm font-semibold text-slate-900">Expected reminders</h2>
+            <button class="text-xs font-medium text-brand-600 hover:underline" @onclick="UseTodaysList">Use today's list</button>
+        </div>
+        <div class="mt-3 space-y-2">
+            @foreach (var z in TimeZoneCatalog.All)
+            {
+                var id = z.Id;
+                <label class="flex items-center justify-between gap-3">
+                    <span class="min-w-0 text-sm text-slate-700">
+                        @TimeZoneCatalog.Flag(z.CountryCode) @z.City
+                        <span class="block text-xs text-slate-500">@z.Region · @TimeZoneCatalog.FormatOffset(TimeZoneCatalog.OffsetAt(_date, _deadline, id))</span>
+                    </span>
+                    <input type="number" min="0" step="50" class="field w-28 text-right tabular-nums"
+                           value="@_counts.GetValueOrDefault(id)" @onchange="e => SetCount(id, e.Value)" />
+                </label>
+            }
+        </div>
+
+        <div class="mt-5 space-y-3 border-t border-slate-100 pt-4">
+            <label class="block">
+                <span class="label">Date (clocks change with daylight saving)</span>
+                <input type="date" class="field" @bind="_date" />
+            </label>
+            <div class="grid grid-cols-2 gap-3">
+                <label class="block">
+                    <span class="label">Deadline</span>
+                    <input type="time" class="field" @bind="_deadline" />
+                </label>
+                <label class="block">
+                    <span class="label">Safety margin</span>
+                    <select class="field" @bind="_margin">
+                        @foreach (var m in new[] { 0, 5, 10, 15, 30, 45, 60 })
+                        {
+                            <option value="@m">@m min</option>
+                        }
+                    </select>
+                </label>
+            </div>
+        </div>
+    </section>
+
+    @* ── Results ────────────────────────────────────────────── *@
+    <section class="min-w-0 space-y-4">
+        @{ var r = Compute(); }
+        <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <StatCard Label="Reminders" Value="@r.Total.ToString("N0")" Hint="@($"In {r.Waves.Count} send waves")" />
+            <StatCard Label="Sending time" Value="@Duration(r.MinutesNeeded)" Hint="@($"At {NotifierSettings.RateLimitPerMinute} per minute")" />
+            <StatCard Label="Earliest local start" Value="@(r.FirstStart ?? "—")" Hint="@(r.FirstStartWhere ?? "Local time")" />
+            <StatCard Label="Late" Value="@r.Late.ToString("N0")" Hint="@($"After {_deadline:HH:mm} local")" ValueClass="@(r.Late > 0 ? "text-rose-600" : "text-emerald-700")" />
+        </div>
+
+        @if (r.Total > 0)
+        {
+            <div class="rounded-xl border p-4 text-sm @(r.Late > 0 ? "border-rose-300 bg-rose-50 text-rose-900" : "border-emerald-200 bg-emerald-50 text-emerald-900")">
+                @if (r.Late == 0)
+                {
+                    <span><span class="font-semibold">Everyone can be reminded before @_deadline.ToString("HH:mm") local.</span>
+                        The earliest wave starts at @r.FirstStart local (@r.FirstStartWhere).</span>
+                }
+                else
+                {
+                    <span><span class="font-semibold">@r.Late.ToString("N0") reminders can't make the deadline</span>, even starting at midnight. That's more than a day's sending at 20 per minute.</span>
+                }
+            </div>
+        }
+
+        <div class="card overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm">
+                    <thead class="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <tr>
+                            <th class="px-4 py-2.5">Wave</th>
+                            <th class="px-4 py-2.5 text-right">Reminders</th>
+                            <th class="px-4 py-2.5">Starts</th>
+                            <th class="px-4 py-2.5">Done by</th>
+                            <th class="px-4 py-2.5 text-right">Sending</th>
+                            <th class="px-4 py-2.5 text-right">Late</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        @foreach (var w in r.Waves)
+                        {
+                            <tr>
+                                <td class="px-4 py-2.5">
+                                    <div class="font-medium text-slate-900">@w.Label</div>
+                                    <div class="text-xs text-slate-500">@w.Cities</div>
+                                </td>
+                                <td class="px-4 py-2.5 text-right tabular-nums">@w.Count.ToString("N0")</td>
+                                <td class="px-4 py-2.5 font-mono">@w.Start</td>
+                                <td class="px-4 py-2.5 font-mono @(w.Late > 0 ? "text-rose-700" : "")">@w.Finish</td>
+                                <td class="px-4 py-2.5 text-right tabular-nums text-slate-600">@Duration(w.Minutes)</td>
+                                <td class="px-4 py-2.5 text-right tabular-nums @(w.Late > 0 ? "font-semibold text-rose-700" : "text-slate-500")">@w.Late.ToString("N0")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <p class="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+                All times are local to the wave. A wave can take longer than its own count needs when an earlier wave is still using the sender.
+            </p>
+        </div>
+    </section>
+</div>
+
+@code {
+    private readonly Dictionary<string, int> _counts = new();
+    private DateOnly _date;
+    private TimeOnly _deadline;
+    private int _margin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _date = State.RunDate;
+        _deadline = Settings.Deadline;
+        _margin = Settings.SafetyMarginMinutes;
+        await State.EnsureLoadedAsync();
+        UseTodaysList();
+    }
+
+    private void UseTodaysList()
+    {
+        _counts.Clear();
+        if (State.Plan is null) return;
+        foreach (var g in State.Plan.Items.Where(i => !i.IsSkipped).GroupBy(i => i.Recipient.TimeZoneId))
+            _counts[g.Key] = g.Count();
+    }
+
+    private void SetCount(string zoneId, object? value) =>
+        _counts[zoneId] = int.TryParse(value?.ToString(), out var n) ? Math.Max(0, n) : 0;
+
+    private sealed record WaveRow(string Label, string Cities, int Count, string Start, string Finish, int Minutes, int Late);
+
+    private sealed record Result(IReadOnlyList<WaveRow> Waves, int Total, int MinutesNeeded, int Late, string? FirstStart, string? FirstStartWhere);
+
+    private Result Compute()
+    {
+        const int rate = NotifierSettings.RateLimitPerMinute;
+        var target = _deadline.AddMinutes(-_margin);
+
+        var groups = TimeZoneCatalog.All
+            .Where(z => _counts.GetValueOrDefault(z.Id) > 0)
+            .GroupBy(z => TimeZoneCatalog.OffsetAt(_date, _deadline, z.Id))
+            .Select(g => new
+            {
+                Offset = g.Key,
+                Ref = g.First().Id,
+                Zones = g.ToList(),
+                Count = g.Sum(z => _counts[z.Id]),
+                Earliest = TimeZoneCatalog.LocalToUtc(_date, TimeOnly.MinValue, g.First().Id),
+                Target = TimeZoneCatalog.LocalToUtc(_date, target, g.First().Id),
+                Deadline = TimeZoneCatalog.LocalToUtc(_date, _deadline, g.First().Id),
+            })
+            .OrderBy(g => g.Deadline)
+            .ToList();
+
+        var total = groups.Sum(g => g.Count);
+        if (total == 0) return new Result(Array.Empty<WaveRow>(), 0, 0, 0, null, null);
+
+        static long Min(DateTimeOffset t) => t.ToUnixTimeSeconds() / 60;
+        var inputs = groups.Select(g => new SendScheduler.WaveInput(Min(g.Earliest), Min(g.Target), Min(g.Deadline), g.Count)).ToList();
+        var (_, results) = SendScheduler.Plan(inputs, rate);
+
+        string Local(long minute, string zone) => TimeZoneCatalog.ToLocal(DateTimeOffset.FromUnixTimeSeconds(minute * 60), zone).ToString("HH:mm");
+
+        var rows = groups.Select((g, i) => new WaveRow(
+            $"{TimeZoneCatalog.FormatOffset(g.Offset)} wave",
+            string.Join(", ", g.Zones.Select(z => $"{z.City} {_counts[z.Id]:N0}")),
+            g.Count,
+            results[i].FirstMinute is { } f ? Local(f, g.Ref) : "—",
+            results[i].LastMinute is { } l ? Local(l + 1, g.Ref) : "—",
+            results[i].FirstMinute is { } f2 && results[i].LastMinute is { } l2 ? (int)(l2 - f2 + 1) : 0,
+            results[i].Late)).ToList();
+
+        // Earliest local clock time any wave starts (what people experience), not the earliest UTC instant.
+        var firstIdx = Enumerable.Range(0, groups.Count).Where(i => results[i].FirstMinute is not null).MinBy(i => Local(results[i].FirstMinute!.Value, groups[i].Ref));
+        return new Result(rows, total, (int)Math.Ceiling(total / (double)rate), results.Sum(x => x.Late),
+            Local(results[firstIdx].FirstMinute!.Value, groups[firstIdx].Ref), groups[firstIdx].Zones[0].City);
+    }
+
+    private static string Duration(int minutes) => minutes < 60 ? $"{minutes} min" : $"{minutes / 60} h {minutes % 60:00} min";
+}

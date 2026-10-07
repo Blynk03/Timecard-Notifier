@@ -1,0 +1,183 @@
+@page "/holidays"
+@inject IHolidayService HolidayService
+@inject DispatchState State
+
+<PageTitle>Holidays · Timecard Reminders</PageTitle>
+
+<header>
+    <h1 class="text-2xl font-semibold text-slate-900" tabindex="-1">Holidays</h1>
+    <p class="mt-1 text-sm text-slate-600">
+        Before each reminder, the recipient's country and cost-center time zone are checked against this calendar.
+        Leave the time zone blank for a country-wide holiday, or pick one to limit it to a region.
+    </p>
+</header>
+
+<div class="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]">
+    <section class="card overflow-hidden">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-3">
+            <h2 class="text-sm font-semibold text-slate-900">Upcoming holidays</h2>
+            <div class="flex flex-wrap gap-1">
+                @foreach (var (code, name) in CountryFilters)
+                {
+                    <button class="rounded-full px-3 py-1 text-xs font-medium @(_country == code ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")"
+                            @onclick="() => _country = code">
+                        @(code == "" ? "All" : $"{TimeZoneCatalog.Flag(code)} {name}")
+                    </button>
+                }
+            </div>
+        </div>
+
+        @foreach (var month in Visible.GroupBy(h => new DateOnly(h.Date.Year, h.Date.Month, 1)))
+        {
+            <div class="bg-slate-50 px-5 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">@month.Key.ToString("MMMM yyyy")</div>
+            <ul class="divide-y divide-slate-100">
+                @foreach (var h in month)
+                {
+                    <li class="flex items-center gap-4 px-5 py-3">
+                        <div class="w-12 shrink-0 rounded-lg border border-slate-200 text-center">
+                            <div class="bg-slate-50 text-[10px] font-semibold uppercase text-slate-500">@h.Date.ToString("ddd")</div>
+                            <div class="text-lg font-semibold leading-7 text-slate-900">@h.Date.Day</div>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <div class="font-medium text-slate-900">@h.Name</div>
+                            <div class="text-xs text-slate-500">
+                                @TimeZoneCatalog.Flag(h.CountryCode) @TimeZoneCatalog.Countries.GetValueOrDefault(h.CountryCode, h.CountryCode)
+                                @if (h.TimeZoneId is not null)
+                                {
+                                    <span> · only @TimeZoneCatalog.Get(h.TimeZoneId).City cost centers</span>
+                                }
+                                @if (h.Date == State.RunDate)
+                                {
+                                    <span class="ml-1 rounded bg-violet-100 px-1.5 py-0.5 font-medium text-violet-700">Current run date</span>
+                                }
+                            </div>
+                        </div>
+                        <button class="rounded-md p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Remove holiday" @onclick="() => RemoveAsync(h)">
+                            <Icon Name="trash" Class="h-4 w-4" />
+                        </button>
+                    </li>
+                }
+            </ul>
+        }
+        @if (!Visible.Any())
+        {
+            <p class="px-5 py-10 text-center text-sm text-slate-500">No upcoming holidays for this filter.</p>
+        }
+    </section>
+
+    <aside class="space-y-4">
+        <section class="card p-5">
+            <h2 class="text-sm font-semibold text-slate-900">Add a holiday</h2>
+            <div class="mt-4 space-y-3">
+                <label class="block">
+                    <span class="label">Date</span>
+                    <input type="date" class="field" @bind="_newDate" />
+                </label>
+                <label class="block">
+                    <span class="label">Name</span>
+                    <input class="field" placeholder="e.g. Company shutdown" @bind="_newName" @bind:event="oninput" />
+                </label>
+                <label class="block">
+                    <span class="label">Country</span>
+                    <select class="field" @bind="_newCountry">
+                        @foreach (var (code, name) in TimeZoneCatalog.Countries)
+                        {
+                            <option value="@code">@name</option>
+                        }
+                    </select>
+                </label>
+                <label class="block">
+                    <span class="label">Time zone (optional)</span>
+                    <select class="field" @bind="_newZone">
+                        <option value="">Whole country</option>
+                        @foreach (var z in TimeZoneCatalog.All.Where(z => z.CountryCode == _newCountry))
+                        {
+                            <option value="@z.Id">@z.City (@z.Region)</option>
+                        }
+                    </select>
+                </label>
+                <button class="btn-primary w-full" disabled="@(string.IsNullOrWhiteSpace(_newName))" @onclick="AddAsync">
+                    <Icon Name="plus" Class="h-4 w-4" /> Add holiday
+                </button>
+            </div>
+        </section>
+
+        <section class="card p-5">
+            <h2 class="text-sm font-semibold text-slate-900">Check a date</h2>
+            <p class="mt-1 text-xs text-slate-500">See which cost-center time zones would be skipped.</p>
+            <input type="date" class="field mt-3" @bind="_checkDate" />
+            <ul class="mt-3 space-y-1.5 text-sm">
+                @foreach (var z in TimeZoneCatalog.All)
+                {
+                    var isWeekend = _checkDate.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+                    var hit = HolidayService.FindFor(z.CountryCode, z.Id, _checkDate);
+                    <li class="flex items-center justify-between gap-2">
+                        <span class="text-slate-700">@TimeZoneCatalog.Flag(z.CountryCode) @z.City</span>
+                        @if (isWeekend)
+                        {
+                            <span class="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">Weekend</span>
+                        }
+                        else if (hit is not null)
+                        {
+                            <span class="truncate rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title="@hit.Name">@hit.Name</span>
+                        }
+                        else
+                        {
+                            <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Sends</span>
+                        }
+                    </li>
+                }
+            </ul>
+        </section>
+    </aside>
+</div>
+
+@code {
+    private IReadOnlyList<Holiday> _all = Array.Empty<Holiday>();
+    private string _country = "";
+
+    private DateOnly _newDate = DateOnly.FromDateTime(DateTime.Today).AddDays(7);
+    private string _newName = "";
+    private string _newCountry = "US";
+    private string _newZone = "";
+    private DateOnly _checkDate = new(2026, 10, 12);
+
+    private static readonly (string Code, string Name)[] CountryFilters =
+        new[] { ("", "All") }.Concat(TimeZoneCatalog.Countries.Select(c => (c.Key, c.Value))).ToArray();
+
+    private IEnumerable<Holiday> Visible => _all
+        .Where(h => h.Date >= DateOnly.FromDateTime(DateTime.Today).AddDays(-1))
+        .Where(h => _country == "" || h.CountryCode == _country);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _all = await HolidayService.GetAllAsync();
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        // Default the checker to the next holiday so it shows something useful.
+        _checkDate = _all.FirstOrDefault(h => h.Date >= today)?.Date ?? today;
+    }
+
+    private async Task AddAsync()
+    {
+        var zone = string.IsNullOrEmpty(_newZone) ? null : _newZone;
+        // Guard against a zone from a previously selected country.
+        if (zone is not null && TimeZoneCatalog.Get(zone).CountryCode != _newCountry) zone = null;
+
+        await HolidayService.AddAsync(new Holiday(_newDate, _newName.Trim(), _newCountry, zone));
+        _newName = "";
+        _newZone = "";
+        await RefreshAsync();
+    }
+
+    private async Task RemoveAsync(Holiday h)
+    {
+        await HolidayService.RemoveAsync(h.Id);
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _all = await HolidayService.GetAllAsync();
+        State.Replan(); // holiday changes affect today's plan
+    }
+}

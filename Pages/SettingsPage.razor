@@ -1,0 +1,111 @@
+@page "/settings"
+@inject NotifierSettings Settings
+
+<PageTitle>Settings · Timecard Reminders</PageTitle>
+
+<header>
+    <h1 class="text-2xl font-semibold text-slate-900" tabindex="-1">Settings</h1>
+    <p class="mt-1 text-sm text-slate-600">Rules for the daily reminder run. Saving re-plans today's run immediately.</p>
+</header>
+
+<div class="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]">
+    <section class="card min-w-0 divide-y divide-slate-100">
+        <div class="space-y-4 p-5">
+            <div>
+                <h2 class="text-sm font-semibold text-slate-900">Deadline</h2>
+                <p class="text-xs text-slate-500">Local time in each cost center's time zone. Each wave starts as late as it can and as early as it needs to.</p>
+            </div>
+            <div class="grid gap-4 sm:grid-cols-2">
+                <label class="block">
+                    <span class="label">Everyone reminded before</span>
+                    <input type="time" class="field" @bind="_deadline" />
+                </label>
+                <label class="block">
+                    <span class="label">Safety margin</span>
+                    <select class="field" @bind="_margin">
+                        @foreach (var m in Margins)
+                        {
+                            <option value="@m">@(m == 0 ? "None: finish right at the deadline" : $"Finish {m} min early")</option>
+                        }
+                    </select>
+                </label>
+            </div>
+            <p class="text-xs text-slate-500">
+                The margin leaves time for retries and slow sends. With @_margin min, the plan aims to be done by
+                <span class="font-mono">@_deadline.AddMinutes(-_margin).ToString("HH:mm")</span>.
+            </p>
+        </div>
+
+        <div class="space-y-3 p-5">
+            <h2 class="text-sm font-semibold text-slate-900">Who gets a reminder</h2>
+            <ul class="list-disc space-y-1 pl-5 text-sm text-slate-700">
+                <li>The work week runs Sunday to Saturday.</li>
+                <li>One reminder if <span class="font-medium">any</span> workday earlier this week has no hours. Example: on Wednesday, missing Monday but not Tuesday still gets a reminder.</li>
+                <li>On Monday (or the first workday of the week after a holiday), last week's Friday is checked instead.</li>
+                <li>Weekends never count, and nobody is reminded on a weekend.</li>
+                <li>People in <a href="exemptions" class="underline">exempt cost centers</a> are never reminded.</li>
+            </ul>
+            <label class="flex items-start gap-3 pt-1">
+                <input type="checkbox" class="mt-0.5 h-4 w-4 accent-brand-600" @bind="_skipHolidays" />
+                <span>
+                    <span class="block text-sm font-medium text-slate-800">Respect holidays</span>
+                    <span class="block text-xs text-slate-500">
+                        Holidays from the <a href="holidays" class="underline">holiday calendar</a> (by country and time zone) don't count as missing days,
+                        and nobody is reminded on their own holiday.
+                    </span>
+                </span>
+            </label>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 p-5">
+            @if (_saved)
+            {
+                <span class="flex items-center gap-1 text-sm text-emerald-700"><Icon Name="check" Class="h-4 w-4" /> Saved</span>
+            }
+            <button class="btn-secondary" @onclick="Load">Discard</button>
+            <button class="btn-primary" @onclick="Save">Save changes</button>
+        </div>
+    </section>
+
+    <aside class="card h-fit p-5">
+        <h2 class="text-sm font-semibold text-slate-900">Send rate</h2>
+        <div class="mt-3 text-3xl font-semibold tabular-nums text-slate-900">@NotifierSettings.RateLimitPerMinute <span class="text-base font-normal text-slate-500">per minute</span></div>
+        <p class="mt-2 text-xs leading-relaxed text-slate-600">
+            Microsoft's limit is fixed and shared by every wave: 1,200 reminders an hour. Big waves start earlier so everyone is reminded before the deadline.
+            The <a href="capacity" class="underline">Capacity planner</a> shows how early each wave has to start for a given volume.
+        </p>
+    </aside>
+</div>
+
+@code {
+    private static readonly int[] Margins = { 0, 5, 10, 15, 30, 45, 60 };
+
+    private TimeOnly _deadline;
+    private int _margin;
+    private bool _skipHolidays;
+    private bool _saved;
+
+    protected override void OnInitialized() => Load();
+
+    private void Load()
+    {
+        _deadline = Settings.Deadline;
+        _margin = Settings.SafetyMarginMinutes;
+        _skipHolidays = Settings.SkipHolidays;
+        _saved = false;
+    }
+
+    private async Task Save()
+    {
+        Settings.Deadline = _deadline;
+        Settings.SafetyMarginMinutes = _margin;
+        Settings.SkipHolidays = _skipHolidays;
+        Settings.SkipWeekends = true;
+        Settings.NotifyChanged();
+
+        _saved = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        _saved = false;
+    }
+}

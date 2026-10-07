@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Timecard Reminders</title>
+    <base href="/" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Compiled Tailwind (npm run css:build). Empty until you build it. -->
+    <link rel="stylesheet" href="css/app.css" />
+
+    <!--
+        DEV FALLBACK: Tailwind Play CDN so the app is styled with zero Node tooling.
+        Once you run `npm install && npm run css:build`, delete everything from here
+        to the END DEV FALLBACK comment.
+    -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+                        mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eef5f8', 100: '#d6e6ee', 200: '#adcddd', 300: '#7eaec5',
+                            400: '#4f8ba9', 500: '#2f6f8f', 600: '#245a75', 700: '#1d4a60',
+                            800: '#173b4c', 900: '#0f2a38',
+                        },
+                        teams: { DEFAULT: '#5b5fc7', dark: '#4f52b2', light: '#e8ebfa' },
+                    },
+                },
+            },
+        };
+    </script>
+    <style type="text/tailwindcss">
+        @layer components {
+            .card { @apply rounded-xl border border-slate-200 bg-white shadow-sm; }
+            .btn { @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50; }
+            .btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700; }
+            .btn-secondary { @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50; }
+            .field { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100; }
+            .label { @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500; }
+        }
+    </style>
+    <!-- END DEV FALLBACK -->
+</head>
+
+<body class="bg-slate-100 font-sans text-slate-800 antialiased">
+    <div id="app">
+        <div class="flex h-screen items-center justify-center text-sm text-slate-500">Loading timecard reminders…</div>
+    </div>
+
+    <div id="blazor-error-ui" class="fixed inset-x-0 bottom-0 z-50 hidden bg-rose-600 px-4 py-3 text-sm text-white">
+        Something went wrong.
+        <a href="" class="reload underline">Reload</a>
+        <a class="dismiss float-right cursor-pointer">✕</a>
+    </div>
+
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+</html>

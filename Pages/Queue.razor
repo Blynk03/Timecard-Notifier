@@ -1,0 +1,156 @@
+@page "/queue"
+@implements IDisposable
+@inject DispatchState State
+
+<PageTitle>Recipients · Timecard Reminders</PageTitle>
+
+<header class="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+    <div>
+        <h1 class="text-2xl font-semibold text-slate-900" tabindex="-1">Recipients</h1>
+        <p class="mt-1 text-sm text-slate-600">
+            Everyone the timecard query returned for the week of @State.WeekStart.ToString("MMM d"). One reminder goes to anyone missing hours on
+            any workday earlier this week, or last Friday on the first workday of the week. Weekends, holidays and <a href="exemptions" class="underline">exempt cost centers</a> don't count.
+        </p>
+    </div>
+    @if (State.LastRefreshedUtc is { } refreshed)
+    {
+        <div class="text-xs text-slate-500">List refreshed @refreshed.ToLocalTime().ToString("h:mm tt")</div>
+    }
+</header>
+
+<section class="card mt-6 p-4">
+    <div class="grid gap-3 md:grid-cols-[1fr_220px_200px]">
+        <label class="relative block">
+            <span class="sr-only">Search</span>
+            <Icon Name="search" Class="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <input class="field pl-9" placeholder="Search name, email, employee ID or cost center" @bind="_search" @bind:event="oninput" />
+        </label>
+        <select class="field" @bind="_zone">
+            <option value="">All time zones</option>
+            @foreach (var z in TimeZoneCatalog.All)
+            {
+                <option value="@z.Id">@z.City (@z.Region)</option>
+            }
+        </select>
+        <select class="field" @bind="_status">
+            <option value="">All statuses</option>
+            <option value="queued">Queued</option>
+            <option value="late">Late risk</option>
+            <option value="sent">Sent</option>
+            <option value="failed">Failed</option>
+            <option value="exempt">Exempt cost center</option>
+            <option value="notneeded">Not needed (no missing workdays)</option>
+            <option value="holiday">Skipped – holiday</option>
+            <option value="weekend">Skipped – weekend</option>
+        </select>
+    </div>
+</section>
+
+@if (State.Plan is null)
+{
+    <div class="card mt-4 grid h-48 place-items-center text-sm text-slate-500">Loading recipients…</div>
+}
+else
+{
+    var rows = Filtered.ToList();
+    <section class="card mt-4 overflow-hidden">
+        <div class="border-b border-slate-200 px-5 py-3 text-sm text-slate-600">
+            Showing <span class="font-medium text-slate-900">@rows.Count.ToString("N0")</span> of @State.Plan.Total.ToString("N0")
+        </div>
+        @* Virtualized: only the rows on screen are rendered, so 10k+ recipients stay fast. *@
+        <div class="max-h-[70vh] overflow-auto">
+            <table class="min-w-full text-sm">
+                <thead class="sticky top-0 z-10 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <tr>
+                        <th class="px-5 py-2.5">Employee</th>
+                        <th class="px-5 py-2.5">Cost center</th>
+                        <th class="px-5 py-2.5">Location</th>
+                        <th class="px-5 py-2.5">Planned send</th>
+                        <th class="px-5 py-2.5">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    <Virtualize Items="rows" Context="item" ItemSize="65" SpacerElement="tr" OverscanCount="10">
+                        @{ var r = item.Recipient; var zone = TimeZoneCatalog.Get(r.TimeZoneId); }
+                        <tr class="hover:bg-slate-50">
+                            <td class="px-5 py-2.5">
+                                <div class="font-medium text-slate-900">@r.DisplayName</div>
+                                <div class="text-xs text-slate-500">@r.Email · @r.EmployeeId</div>
+                            </td>
+                            <td class="px-5 py-2.5 text-slate-700">
+                                <div class="font-mono text-xs text-slate-800">@r.CostCenterCode</div>
+                                <div class="text-xs text-slate-500">@r.CostCenterName</div>
+                            </td>
+                            <td class="whitespace-nowrap px-5 py-2.5 text-slate-700">
+                                @TimeZoneCatalog.Flag(r.CountryCode) @zone.City
+                                <div class="text-xs text-slate-500">@zone.Region</div>
+                            </td>
+                            <td class="whitespace-nowrap px-5 py-2.5">
+                                @if (item.PlannedUtc is { } planned)
+                                {
+                                    <div class="font-mono text-slate-800">@TimeZoneCatalog.ToLocal(planned, r.TimeZoneId).ToString("HH:mm:ss") <span class="font-sans text-xs text-slate-500">local</span></div>
+                                    <div class="text-xs text-slate-500">@planned.ToLocalTime().ToString("h:mm tt") your time</div>
+                                }
+                                else
+                                {
+                                    <span class="text-slate-400">—</span>
+                                }
+                            </td>
+                            <td class="px-5 py-2.5">
+                                <StatusBadge Status="item.Status" LateRisk="item.IsLateRisk" />
+                                @if (!string.IsNullOrEmpty(item.Note))
+                                {
+                                    <div class="mt-0.5 text-xs text-slate-500">@item.Note</div>
+                                }
+                            </td>
+                        </tr>
+                    </Virtualize>
+                </tbody>
+            </table>
+            @if (rows.Count == 0)
+            {
+                <p class="px-5 py-10 text-center text-sm text-slate-500">No recipients match these filters.</p>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private string _search = "";
+    private string _zone = "";
+    private string _status = "";
+
+    private IEnumerable<DispatchItem> Filtered =>
+        State.Plan!.Items
+            .Where(i => _zone == "" || i.Recipient.TimeZoneId == _zone)
+            .Where(i => _status switch
+            {
+                "queued" => i.Status == DispatchStatus.Queued && !i.IsLateRisk,
+                "late" => i.IsLateRisk,
+                "sent" => i.Status == DispatchStatus.Sent,
+                "failed" => i.Status == DispatchStatus.Failed,
+                "exempt" => i.Status == DispatchStatus.Exempt,
+                "notneeded" => i.Status == DispatchStatus.NoMissingWorkdays,
+                "holiday" => i.Status == DispatchStatus.SkippedHoliday,
+                "weekend" => i.Status == DispatchStatus.SkippedWeekend,
+                _ => true,
+            })
+            .Where(i => string.IsNullOrWhiteSpace(_search) || Matches(i.Recipient, _search.Trim()))
+            .OrderBy(i => i.PlannedUtc ?? DateTimeOffset.MaxValue)
+            .ThenBy(i => i.Recipient.DisplayName);
+
+    private static bool Matches(Recipient r, string q) =>
+        r.DisplayName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+        r.Email.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+        r.EmployeeId.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+        r.CostCenter.Contains(q, StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnChanged;
+        await State.EnsureLoadedAsync();
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+    public void Dispose() => State.Changed -= OnChanged;
+}

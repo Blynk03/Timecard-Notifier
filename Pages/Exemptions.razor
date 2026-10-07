@@ -1,0 +1,205 @@
+@page "/exemptions"
+@implements IDisposable
+@inject IExemptionService ExemptionService
+@inject DispatchState State
+
+<PageTitle>Exempt cost centers · Timecard Reminders</PageTitle>
+
+<header>
+    <h1 class="text-2xl font-semibold text-slate-900" tabindex="-1">Exempt cost centers</h1>
+    <p class="mt-1 max-w-3xl text-sm text-slate-600">
+        Employees in these cost centers are never sent a reminder, whether or not they've entered hours this week.
+        They still show on the Recipients page as <span class="font-medium">Exempt</span> so you can see who was left out.
+    </p>
+</header>
+
+<div class="mt-6 grid gap-4 lg:grid-cols-[1fr_340px]">
+    <div class="min-w-0 space-y-4">
+        @* ── Current exemptions ─────────────────────────────── *@
+        <section class="card overflow-hidden">
+            <div class="flex items-center justify-between border-b border-slate-200 px-5 py-3">
+                <h2 class="text-sm font-semibold text-slate-900">Exempt list</h2>
+                <span class="text-xs text-slate-500">@_items.Count cost center@(_items.Count == 1 ? "" : "s") · @ExemptToday people skipped today</span>
+            </div>
+            @if (_items.Count == 0)
+            {
+                <p class="px-5 py-10 text-center text-sm text-slate-500">No cost centers are exempt. Add one on the right.</p>
+            }
+            else
+            {
+                <div class="overflow-x-auto">
+                    <table class="min-w-full text-sm">
+                        <thead class="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            <tr>
+                                <th class="px-5 py-2.5">Cost center</th>
+                                <th class="px-5 py-2.5">Reason</th>
+                                <th class="px-5 py-2.5 text-right">In today's list</th>
+                                <th class="px-5 py-2.5"><span class="sr-only">Remove</span></th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            @foreach (var e in _items)
+                            {
+                                var count = PeopleIn(e.Code);
+                                <tr>
+                                    <td class="px-5 py-2.5">
+                                        <div class="font-mono text-slate-900">@e.Code</div>
+                                        <div class="text-xs text-slate-500">@(e.Name ?? "Not in today's list")</div>
+                                    </td>
+                                    <td class="px-5 py-2.5 text-slate-700">
+                                        @(string.IsNullOrWhiteSpace(e.Reason) ? "—" : e.Reason)
+                                        <div class="text-xs text-slate-400">Added @e.AddedOn.ToString("MMM d, yyyy")</div>
+                                    </td>
+                                    <td class="px-5 py-2.5 text-right tabular-nums text-slate-700">@count</td>
+                                    <td class="px-5 py-2.5 text-right">
+                                        <button class="rounded-md px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50" @onclick="() => RemoveAsync(e.Code)">Remove</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+
+        @* ── Cost centers seen in today's query ───────────────── *@
+        <section class="card overflow-hidden">
+            <div class="border-b border-slate-200 px-5 py-3">
+                <h2 class="text-sm font-semibold text-slate-900">Cost centers in today's list</h2>
+                <p class="text-xs text-slate-500">Exempt or reinstate a cost center with one click.</p>
+            </div>
+            <ul class="divide-y divide-slate-100">
+                @foreach (var (code, name, count) in State.KnownCostCenters)
+                {
+                    var exempt = ExemptionService.Find(code) is not null;
+                    <li class="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">
+                        <div class="min-w-0">
+                            <span class="font-mono text-slate-900">@code</span>
+                            <span class="ml-1 text-slate-600">@name</span>
+                            <span class="ml-1 text-xs text-slate-400">@count people</span>
+                        </div>
+                        @if (exempt)
+                        {
+                            <button class="shrink-0 rounded-md border border-stone-300 bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-700 hover:bg-stone-200" @onclick="() => RemoveAsync(code)">Exempt · Undo</button>
+                        }
+                        else
+                        {
+                            <button class="shrink-0 rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50" @onclick="() => AddOneAsync(code, null)">Exempt</button>
+                        }
+                    </li>
+                }
+            </ul>
+        </section>
+    </div>
+
+    @* ── Add ─────────────────────────────────────────────────── *@
+    <aside class="space-y-4">
+        <section class="card p-5">
+            <h2 class="text-sm font-semibold text-slate-900">Add exempt cost centers</h2>
+            <div class="mt-4 space-y-3">
+                <label class="block">
+                    <span class="label">Cost center codes</span>
+                    <textarea class="field min-h-[96px] font-mono" placeholder="CC-2140&#10;CC-4120, CC-5200" @bind="_codes" @bind:event="oninput"></textarea>
+                    <span class="mt-1 block text-xs text-slate-500">One or more, separated by commas, spaces or new lines.</span>
+                </label>
+                <label class="block">
+                    <span class="label">Reason (optional)</span>
+                    <input class="field" placeholder="e.g. Salaried staff" @bind="_reason" @bind:event="oninput" />
+                </label>
+
+                @if (ParsedCodes.Count > 0)
+                {
+                    <div class="flex flex-wrap gap-1">
+                        @foreach (var c in ParsedCodes)
+                        {
+                            var known = State.KnownCostCenters.Any(k => string.Equals(k.Code, c, StringComparison.OrdinalIgnoreCase));
+                            <span class="rounded-md px-1.5 py-0.5 font-mono text-xs @(known ? "bg-brand-50 text-brand-700" : "bg-amber-50 text-amber-800")"
+                                  title="@(known ? "In today's list" : "Not in today's list (it will still be exempted)")">@c</span>
+                        }
+                    </div>
+                }
+
+                <button class="btn-primary w-full" disabled="@(ParsedCodes.Count == 0)" @onclick="AddParsedAsync">
+                    <Icon Name="plus" Class="h-4 w-4" /> Exempt @(ParsedCodes.Count > 1 ? $"{ParsedCodes.Count} cost centers" : "cost center")
+                </button>
+                @if (_message is not null)
+                {
+                    <p class="text-xs text-emerald-700">@_message</p>
+                }
+            </div>
+        </section>
+        <p class="px-1 text-xs leading-relaxed text-slate-500">
+            Exemptions apply from the next plan. Codes that aren't in today's list (amber) are still saved, so a cost center can be exempted before anyone in it shows up.
+        </p>
+    </aside>
+</div>
+
+@code {
+    private IReadOnlyList<CostCenterExemption> _items = Array.Empty<CostCenterExemption>();
+    private string _codes = "";
+    private string _reason = "";
+    private string? _message;
+
+    private static readonly char[] Separators = { ',', ';', ' ', '\n', '\r', '\t' };
+
+    private List<string> ParsedCodes => _codes
+        .Split(Separators, StringSplitOptions.RemoveEmptyEntries)
+        .Select(CostCenterExemption.Normalize)
+        .Distinct()
+        .ToList();
+
+    private int PeopleIn(string code) =>
+        State.Plan?.Items.Count(i => string.Equals(i.Recipient.CostCenterCode, code, StringComparison.OrdinalIgnoreCase)) ?? 0;
+
+    private int ExemptToday => State.Plan?.Exempt ?? 0;
+
+    private string? NameFor(string code) =>
+        State.KnownCostCenters.FirstOrDefault(k => string.Equals(k.Code, code, StringComparison.OrdinalIgnoreCase)).Name;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnChanged;
+        await State.EnsureLoadedAsync();
+        _items = await ExemptionService.GetAllAsync();
+    }
+
+    private async Task AddParsedAsync()
+    {
+        var codes = ParsedCodes;
+        foreach (var code in codes) await AddCoreAsync(code, _reason);
+        _message = codes.Count == 1 ? $"{codes[0]} is now exempt." : $"{codes.Count} cost centers are now exempt.";
+        _codes = "";
+        _reason = "";
+        await RefreshAsync();
+    }
+
+    private async Task AddOneAsync(string code, string? reason)
+    {
+        await AddCoreAsync(code, reason);
+        _message = null;
+        await RefreshAsync();
+    }
+
+    private Task AddCoreAsync(string code, string? reason) =>
+        ExemptionService.AddAsync(new CostCenterExemption(
+            CostCenterExemption.Normalize(code),
+            NameFor(code),
+            string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
+            DateOnly.FromDateTime(DateTime.Today)));
+
+    private async Task RemoveAsync(string code)
+    {
+        await ExemptionService.RemoveAsync(code);
+        _message = null;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        _items = await ExemptionService.GetAllAsync();
+        State.Replan(); // exempt people drop out of today's plan immediately
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+    public void Dispose() => State.Changed -= OnChanged;
+}

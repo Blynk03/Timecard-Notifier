@@ -1,0 +1,16 @@
+<span class="font-medium @Color">@Wave.Status</span>
+
+@code {
+    [Parameter, EditorRequired] public SendWave Wave { get; set; } = default!;
+
+    private string Color => Wave.Status switch
+    {
+        "Complete" => "text-emerald-700",
+        "Sending" => "text-brand-600",
+        "Holiday" => "text-violet-700",
+        "Weekend" => "text-sky-700",
+        "Nothing to send" => "text-slate-500",
+        _ when Wave.LateRisk > 0 => "text-amber-700",
+        _ => "text-slate-700",
+    };
+}

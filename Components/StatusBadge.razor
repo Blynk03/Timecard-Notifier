@@ -1,0 +1,51 @@
+<span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium @Classes">
+    <span class="h-1.5 w-1.5 rounded-full @Dot @(Status == DispatchStatus.Sending ? "animate-pulse" : "")"></span>
+    @Text
+</span>
+
+@code {
+    [Parameter] public DispatchStatus Status { get; set; }
+    [Parameter] public bool LateRisk { get; set; }
+
+    private string Text => Status switch
+    {
+        DispatchStatus.Queued when LateRisk => "Queued · late risk",
+        DispatchStatus.Queued => "Queued",
+        DispatchStatus.Sending => "Sending",
+        DispatchStatus.Sent => "Sent",
+        DispatchStatus.Failed => "Failed",
+        DispatchStatus.Exempt => "Exempt",
+        DispatchStatus.SkippedHoliday => "Holiday",
+        DispatchStatus.SkippedWeekend => "Weekend",
+        DispatchStatus.NoMissingWorkdays => "Not needed",
+        _ => Status.ToString(),
+    };
+
+    private string Classes => Status switch
+    {
+        DispatchStatus.Queued when LateRisk => "bg-amber-50 text-amber-800 ring-1 ring-amber-200",
+        DispatchStatus.Queued => "bg-slate-100 text-slate-700",
+        DispatchStatus.Sending => "bg-brand-50 text-brand-700",
+        DispatchStatus.Sent => "bg-emerald-50 text-emerald-700",
+        DispatchStatus.Failed => "bg-rose-50 text-rose-700",
+        DispatchStatus.Exempt => "bg-stone-100 text-stone-600 ring-1 ring-stone-200",
+        DispatchStatus.SkippedHoliday => "bg-violet-50 text-violet-700",
+        DispatchStatus.SkippedWeekend => "bg-sky-50 text-sky-700",
+        DispatchStatus.NoMissingWorkdays => "bg-white text-slate-500 ring-1 ring-slate-200",
+        _ => "bg-slate-100 text-slate-700",
+    };
+
+    private string Dot => Status switch
+    {
+        DispatchStatus.Queued when LateRisk => "bg-amber-500",
+        DispatchStatus.Queued => "bg-slate-400",
+        DispatchStatus.Sending => "bg-brand-500",
+        DispatchStatus.Sent => "bg-emerald-500",
+        DispatchStatus.Failed => "bg-rose-500",
+        DispatchStatus.Exempt => "bg-stone-400",
+        DispatchStatus.SkippedHoliday => "bg-violet-500",
+        DispatchStatus.SkippedWeekend => "bg-sky-500",
+        DispatchStatus.NoMissingWorkdays => "bg-slate-300",
+        _ => "bg-slate-400",
+    };
+}

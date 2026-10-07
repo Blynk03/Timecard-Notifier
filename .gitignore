@@ -1,0 +1,16 @@
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+
+# Node / Tailwind tooling
+node_modules/
+package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
